@@ -1,0 +1,6 @@
+{
+  "name": "shellworks",
+  "private": true,
+  "type": "module",
+  "scripts": { "balance": "node tools/balance.js" }
+}

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0b1018">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Shellworks</title>
+  <meta name="description" content="Design your own shells and rockets — Bezier-drawn shapes, real mass, drag and stability — and blow up the target core for the lowest cost.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M8 26h30l18 6-18 6H8z' fill='%238d99a6'/%3E%3Crect x='14' y='26' width='4' height='12' fill='%23d58a46'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <!-- MAIN MENU -->
+  <section id="menu" class="screen">
+    <div class="menu-card">
+      <div class="logo"><span class="logo-mark"></span>SHELLWORKS</div>
+      <div class="tag">Ballistics lab · design · fire · destroy the core</div>
+      <button class="btn big primary" data-go="levels">Campaign</button>
+      <button class="btn big" data-go="sandbox">Sandbox</button>
+      <button class="btn" data-go="help">How it works</button>
+      <div class="menu-foot">
+        <label class="mini">Graphics <select id="quality"><option value="auto">Auto</option><option value="high">High</option><option value="low">Low (phones)</option></select></label>
+        <span id="fpsLabel" class="mini"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- LEVEL SELECT -->
+  <section id="levels" class="screen hidden">
+    <header class="bar">
+      <button class="btn icon" data-go="menu" aria-label="Back">‹</button>
+      <h2>Campaign</h2>
+      <span class="grow"></span>
+      <span id="totalStars" class="pill">★ 0</span>
+    </header>
+    <p class="sub">Destroy at least 40% of the red core. Stars are awarded for how <b>cheap</b> your shells were.</p>
+    <div id="levelGrid" class="level-grid"></div>
+  </section>
+
+  <!-- WORKSHOP -->
+  <section id="workshop" class="screen hidden">
+    <header class="bar">
+      <button class="btn icon" id="wsBack" aria-label="Back">‹</button>
+      <div class="ws-title">
+        <input id="dName" class="name-input" maxlength="28" spellcheck="false">
+        <div id="wsBrief" class="brief"></div>
+      </div>
+      <span class="grow"></span>
+      <div class="cost-badge"><small>Cost / shell</small><b id="wsCost">₵0</b></div>
+      <button class="btn primary" id="wsDeploy">To range ›</button>
+    </header>
+    <div class="ws-body">
+      <div class="ws-view">
+        <canvas id="shellCanvas"></canvas>
+        <div class="ws-tools">
+          <button class="btn sm" id="tAdd">+ Point</button>
+          <button class="btn sm" id="tDel">− Point</button>
+          <button class="btn sm toggle on" id="tSmooth">Smooth</button>
+          <select id="tPreset" class="sm"><option value="">Templates…</option></select>
+        </div>
+        <div class="ws-hint">Drag the blue points and orange handles to sculpt the outline</div>
+      </div>
+      <div class="ws-panel">
+        <nav class="tabs" id="tabs">
+          <button data-tab="body" class="on">Body</button>
+          <button data-tab="payload">Payload</button>
+          <button data-tab="launch">Launch</button>
+          <button data-tab="saved">Saved</button>
+        </nav>
+        <div class="tab-body" id="tabBody"></div>
+        <div class="stats" id="stats"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RANGE HUD -->
+  <section id="hud" class="screen hidden hud">
+    <div class="hud-top">
+      <button class="btn icon" id="hudBack" aria-label="Menu">‹</button>
+      <div class="hud-stage"><b id="hudName">Stage</b><small id="hudDist"></small></div>
+      <span class="grow"></span>
+      <div class="hud-chip"><small>Spent</small><b id="hudSpent">₵0</b></div>
+      <div class="hud-chip"><small>Shots</small><b id="hudShots">1</b></div>
+      <div class="core-meter"><small>Core</small><div class="meter"><i id="coreBar"></i><em></em></div><b id="corePct">0%</b></div>
+    </div>
+    <div id="sandboxBar" class="sandbox-bar hidden">
+      <select id="sbTarget"></select>
+      <label class="mini">Range <input type="range" id="sbDist" min="50" max="4000" step="50" value="500"><b id="sbDistV">500 m</b></label>
+      <button class="btn sm toggle" id="sbPaint">✎ Paint</button>
+      <button class="btn sm" id="sbReset">Reset target</button>
+      <button class="btn sm toggle on" id="sbSlow">Slow-mo</button>
+      <div id="paintBar" class="paint-bar hidden"></div>
+    </div>
+    <div id="hudMsg" class="hud-msg"></div>
+    <div class="hud-bottom">
+      <button class="btn" id="hudWorkshop">⚙ Workshop</button>
+      <div id="aimInfo" class="aim-info">Tap the target to aim</div>
+      <button class="btn primary fire" id="hudFire">FIRE</button>
+    </div>
+  </section>
+
+  <div id="modal" class="modal hidden"><div class="modal-card" id="modalCard"></div></div>
+  <div id="toast" class="toast"></div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

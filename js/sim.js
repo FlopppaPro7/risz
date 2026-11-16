@@ -6,6 +6,7 @@ import { penetratorFor } from './design.js';
 
 const NOOP_FX = new Proxy({}, { get: () => () => {} });
 const DEG = Math.PI / 180;
+let BARREL = 2.2; // distance from the gun's trunnion to the muzzle (m)
 
 export class World {
   constructor({ build, dist, fx }) {
@@ -16,10 +17,15 @@ export class World {
     this.proj = null;
     this.frags = [];
     this.time = 0;
-    this.log = [];
+    this.hot = [];
     this.collapsePending = false;
     this.debrisBudget = 300;
+    this.shot = { result: '', impactV: 0, depth: 0, notes: [], log: [] };
   }
+
+  static setBarrel(len) { BARREL = len; }
+  static get barrel() { return BARREL; }
+  static muzzle(angle) { return [Math.cos(angle) * BARREL, MUZZLE_H + Math.sin(angle) * BARREL]; }
 
   get gridW() { return GRID_W * CELL; }
   get gridTop() { return G_ROWS * CELL; }
@@ -31,58 +37,90 @@ export class World {
   inGrid(x, y) { return x >= this.x0 && x < this.x0 + this.gridW && y < this.gridTop && y > -GRID_H * CELL; }
 
   busy() { return !!this.proj || this.frags.length > 0; }
+  log(msg) { if (this.shot.log.length < 40) this.shot.log.push(msg); }
 
   // ---------- launching ----------
   fire(design, a, angle) {
     const c = Math.cos(angle), s = Math.sin(angle);
     const v0 = a.muzzleV;
+    const [mx, my] = World.muzzle(angle);
     this.proj = {
-      d: design, a, x: c * 2.2, y: MUZZLE_H + s * 2.2, vx: c * v0, vy: s * v0,
-      state: 'flight', t: 0, mass: a.flightMass, burn: a.rocket ? a.burnTime : 0,
+      d: design, a, x: mx, y: my, vx: c * v0, vy: s * v0,
+      state: 'flight', t: 0, mass: a.flightMass, burn: a.thrust > 0 ? a.burnTime : 0,
       yaw: 0.002 + (1 - a.stab) * 0.05, yawPhase: Math.random() * 6, noise: Math.random() * 2 - 1, noise2: Math.random() * 2 - 1,
       ricochets: 0, contact: -1, inSolid: false, lastMat: 0, depth: 0, impactV: 0, maxY: 0,
     };
-    this.shot = { result: 'flying', impactV: 0, depth: 0, notes: [] };
+    this.shot = { result: 'flying', impactV: 0, depth: 0, notes: [], log: [], coreBefore: this.grid.coreFraction() };
     this.debrisBudget = 320;
-    this.fx.muzzle(c * 2.2, MUZZLE_H + s * 2.2, angle, a.rocket, a.D);
+    this.embedded = null;
+    this.fx.muzzle(mx, my, angle, a.rocket, a.D);
   }
 
-  // Deterministic, ideal-flight trajectory (no yaw noise) for aiming.
-  static trajectory(a, angle, xTarget, maxT = 60, pts = null) {
-    let x = Math.cos(angle) * 2.2, y = MUZZLE_H + Math.sin(angle) * 2.2;
+  // One ideal-flight integration step shared by prediction helpers.
+  static *flight(a, angle) {
+    let [x, y] = World.muzzle(angle);
     let vx = Math.cos(angle) * a.muzzleV, vy = Math.sin(angle) * a.muzzleV;
-    let m = a.flightMass, burn = a.rocket ? a.burnTime : 0, t = 0;
-    const mdot = a.rocket ? a.mass.prop / a.burnTime : 0;
-    const yaw = 0.004 + (1 - a.stab) * 0.05;
-    let px = x, py = y;
-    while (t < maxT) {
+    let m = a.flightMass, burn = a.thrust > 0 ? a.burnTime : 0, t = 0;
+    const mdot = a.thrust > 0 ? a.mass.prop / a.burnTime : 0;
+    const yaw = 0.002 + (1 - a.stab) * 0.05;
+    while (t < 90) {
       const v = Math.hypot(vx, vy) || 1e-6;
-      const h = burn > 0 ? 1 / 240 : clamp(3 / v, 1 / 480, 1 / 60);
+      const h = yield { x, y, vx, vy, v, t, burn };
       let ax = 0, ay = -GRAVITY;
       if (burn > 0) { const f = a.thrust / m; ax += f * vx / v; ay += f * vy / v; m -= mdot * h; burn -= h; }
       const fd = airDecel(a, v, burn > 0, yaw) / m;
       ax -= fd * vx / v; ay -= fd * vy / v;
-      vx += ax * h; vy += ay * h; px = x; py = y; x += vx * h; y += vy * h; t += h;
-      if (pts && pts.length < 4000) pts.push(x, y);
-      if (x >= xTarget) {
-        const f = (xTarget - px) / (x - px);
-        return { y: py + (y - py) * f, v: Math.hypot(vx, vy), t, hit: true };
-      }
-      if (y < -1 || (vx <= 0.5 && burn <= 0)) return { y: -1e9, v: 0, t, hit: false, x };
+      vx += ax * h; vy += ay * h; x += vx * h; y += vy * h; t += h;
     }
-    return { y: -1e9, v: 0, t, hit: false, x };
+  }
+
+  // Ideal trajectory up to xTarget (used by the balancing tools and the menu demo).
+  static trajectory(a, angle, xTarget, maxT = 60, pts = null) {
+    const it = World.flight(a, angle);
+    let s = it.next().value, px = s.x, py = s.y;
+    while (s && s.t < maxT) {
+      const h = s.burn > 0 ? 1 / 240 : clamp(3 / s.v, 1 / 480, 1 / 60);
+      px = s.x; py = s.y;
+      s = it.next(h).value;
+      if (!s) break;
+      if (pts && pts.length < 4000) pts.push(s.x, s.y);
+      if (s.x >= xTarget) { const f = (xTarget - px) / (s.x - px); return { y: py + (s.y - py) * f, v: s.v, t: s.t, hit: true }; }
+      if (s.y < -1 || (s.vx <= 0.5 && s.burn <= 0)) return { y: -1e9, v: 0, t: s.t, hit: false, x: s.x };
+    }
+    return { y: -1e9, v: 0, t: 0, hit: false, x: px };
   }
 
   static solveAngle(a, xT, yT) {
     const f = ang => World.trajectory(a, ang, xT).y - yT;
     let lo = -4 * DEG, hi = 45 * DEG;
-    const fhi = f(hi);
-    if (fhi < 0) return { angle: hi, ok: false };
+    if (f(hi) < 0) return { angle: hi, ok: false };
     if (f(lo) > 0) return { angle: lo, ok: true };
     for (let i = 0; i < 28; i++) { const mid = (lo + hi) / 2; if (f(mid) > 0) hi = mid; else lo = mid; }
     const ang = (lo + hi) / 2;
     const tr = World.trajectory(a, ang, xT);
     return { angle: ang, ok: true, v: tr.v, t: tr.t };
+  }
+
+  // Where would an ideal (perfectly stable) shot at this elevation strike this world?
+  predict(a, angle, pts = null) {
+    const it = World.flight(a, angle);
+    let s = it.next().value, apex = 0;
+    while (s && s.t < 90) {
+      const near = s.x > this.x0 - s.v * 0.02 - 1 && s.x < this.x0 + this.gridW + 1 && s.y < this.gridTop + 1;
+      const h = near ? Math.min(1 / 240, CELL * 0.45 / s.v) : s.burn > 0 ? 1 / 240 : clamp(4 / s.v, 1 / 480, 1 / 40);
+      s = it.next(h).value;
+      if (!s) break;
+      if (pts && (pts.length < 6000) && (!near || pts.length % 8 === 0)) pts.push(s.x, s.y);
+      apex = Math.max(apex, s.y);
+      if (this.inGrid(s.x, s.y)) {
+        const m = this.matAt(s.x, s.y);
+        if (m) return { hit: true, x: s.x, y: s.y, v: s.v, t: s.t, mat: m, apex };
+      }
+      if (s.y < 0 && !(s.x >= this.x0 && s.x < this.x0 + this.gridW)) return { hit: false, x: s.x, y: 0, v: s.v, t: s.t, short: s.x < this.x0, apex };
+      if (s.x > this.x0 + this.gridW + 2) return { hit: false, x: s.x, y: s.y, v: s.v, t: s.t, over: true, apex };
+      if (s.vx <= 0.5 && s.burn <= 0) return { hit: false, x: s.x, y: s.y, v: s.v, t: s.t, short: true, apex };
+    }
+    return { hit: false, x: s ? s.x : 0, y: 0, v: 0, t: 90, short: true, apex };
   }
 
   // ---------- stepping ----------
@@ -119,7 +157,6 @@ export class World {
         p.mass -= a.mass.prop / a.burnTime * h; p.burn -= h;
         if (Math.random() < h * 60) this.fx.trail(p.x, p.y, p.vx, p.vy, true);
       }
-      // yaw dynamics
       if (a.stab >= 0.98) p.yaw = Math.max(0.0003, p.yaw * Math.exp(-h * 3));
       else p.yaw = Math.min(1.5, p.yaw + p.yaw * 7 * (1 - a.stab) ** 2 * h);
       p.yawPhase += h * (18 + 10 * a.stab);
@@ -138,13 +175,15 @@ export class World {
         if (m) { this.impact(m); return; }
       }
       if (p.y < 0 && !(p.x >= this.x0 && p.x < this.x0 + this.gridW)) {
-        this.shot.result = 'Missed — hit the ground';
+        this.shot.result = p.x < this.x0 ? `Missed — landed ${Math.round(this.x0 - p.x)} m short` : 'Missed — landed long';
+        this.log(this.shot.result);
         if (a.fillerTNT > 0) this.detonate(p.x, 0.05, a.fillerTNT, a.jacketMass);
         else this.fx.dust(p.x, 0, 1);
         this.endProj(); return;
       }
-      if (p.x > this.x0 + this.gridW + 2 || p.t > 60 || (p.vx < 0 && p.burn <= 0)) {
-        this.shot.result = 'Missed — flew past';
+      if (p.x > this.x0 + this.gridW + 2 || p.t > 90 || (p.vx < 0 && p.burn <= 0)) {
+        this.shot.result = 'Missed — flew over';
+        this.log(this.shot.result);
         this.endProj();
       }
     } else if (p.state === 'pen') {
@@ -170,53 +209,82 @@ export class World {
     const cosT = clamp(-(dx * nx + dy * ny), -1, 1);
     const theta = Math.acos(cosT);
     const tm = TMATS[m];
-    if (!this.shot.impactV) { this.shot.impactV = v; this.shot.angle = theta / DEG; }
+    if (!this.shot.impactV) {
+      this.shot.impactV = v; this.shot.angle = theta / DEG;
+      this.log(`Impact on ${tm.name} at ${v.toFixed(0)} m/s, ${(theta / DEG).toFixed(0)}° from square`);
+    }
     const yawNow = p.yaw * Math.abs(Math.sin(p.yawPhase));
-    // back off to just outside the surface
+    if (yawNow > 0.25) this.log(`Arrived ${(yawNow / DEG).toFixed(0)}° sideways (unstable)`);
     const bx = p.x - dx * CELL * 0.6, by = p.y - dy * CELL * 0.6;
     if (a.type === 'HE') {
       this.shot.result = 'Detonated on contact';
+      this.log(`Burst: ${a.fillerTNT.toFixed(2)} kg TNT-equivalent`);
       this.detonate(bx, by, a.fillerTNT, a.jacketMass);
       this.endProj(); return;
     }
+    if (a.type === 'HESH') { this.squash(p.x, p.y, bx, by, dx, dy, m); this.endProj(); return; }
     if (a.type === 'HEAT') {
       this.shot.result = 'Shaped charge fired';
-      this.fireJet(p.x - dx * CELL * 0.3, p.y - dy * CELL * 0.3, dx, dy, a.jetPen * Math.pow(Math.cos(Math.min(yawNow, 1.4)), 4), a.linerD);
+      const yf = Math.pow(Math.cos(Math.min(yawNow, 1.4)), 4);
+      a.jets.forEach((jt, k) => {
+        const last = k === a.jets.length - 1;
+        this.log(`${a.jets.length > 1 ? (last ? 'Main jet' : 'Precursor jet') : 'Jet'}: ${(jt.pen * yf * 1000).toFixed(0)} mm potential${jt.obst > 0.01 ? ` (lost ${(jt.obst * 1200).toFixed(0)} mm cutting through your own shell)` : ''}`);
+        this.fireJet(p.x - dx * CELL * 0.3, p.y - dy * CELL * 0.3, dx, dy, jt.pen * yf, jt.linerD, !last);
+      });
       this.detonate(bx, by, a.fillerTNT * 0.5, a.jacketMass, true);
       this.endProj(); return;
     }
     if (tm.fixed) { this.shot.result = 'Hit the ground'; this.fx.dust(p.x, p.y, 1); if (a.type === 'APHE') this.detonate(bx, by, a.fillerTNT, a.jacketMass); this.endProj(); return; }
-    // ricochet test
     let thetaC = (64 + (1 - a.nf) * 16 + (a.LD > 8 ? 8 : 0) + (v > 1300 ? 4 : 0)) * DEG;
     if (tm.H < 3) thetaC = 89 * DEG;
     if (theta > thetaC && p.ricochets < 3) {
       const dot = dx * nx + dy * ny;
-      let rx = dx - 2 * dot * nx, ry = dy - 2 * dot * ny;
+      const rx = dx - 2 * dot * nx, ry = dy - 2 * dot * ny;
       const sp = v * 0.55;
       p.vx = rx * sp; p.vy = ry * sp; p.x = bx; p.y = by; p.ricochets++;
       p.yaw = Math.min(1.5, p.yaw + 0.5);
       this.grid.damage(i, j, 0.6);
       this.fx.spark(p.x, p.y, rx * 200, ry * 200, 40, 0.6, 400);
       this.fx.shake(0.3);
-      this.shot.notes.push('Ricochet!');
+      this.shot.notes.push('Ricochet!'); this.log(`Ricochet off ${tm.name} (too shallow: ${(theta / DEG).toFixed(0)}° > ${(thetaC / DEG).toFixed(0)}°)`);
       this.shot.result = 'Ricochet';
       return;
     }
     const pen = penetratorFor(a, tm.H);
     pen.v = v; pen.yaw = yawNow;
-    const stripped = pen.m < a.whole.m * 0.98;
-    if (stripped) { this.carve(p.x, p.y, a.D / 2, dx, dy, -dx * 20, -dy * 20, 30, 0); this.fx.spark(bx, by, -dx * 150, -dy * 150, 25, 1.2, 250); this.shot.notes.push('Jacket stripped'); }
-    // normalisation toward surface normal
+    if (pen.stripped) {
+      // the softer body peels away and the hard inner core carries on
+      this.carve(p.x, p.y, a.D / 2, dx, dy, -dx * 20, -dy * 20, 30, 0);
+      this.fx.peel(bx, by, dx, dy, a.jacketColor, Math.round(10 + a.D * 120));
+      this.fx.molten(bx, by, -dx * 6, -dy * 6, 14);
+      this.shot.notes.push('Body stripped');
+      this.log(`Outer body peels off on the ${tm.name} — ${a.coreName} core carries on (${pen.m.toFixed(2)} kg)`);
+    }
     const turn = Math.min(theta, (5 + 8 * (1 - a.nf)) * DEG);
     const ang = Math.atan2(dy, dx), tgt = Math.atan2(-ny, -nx);
     let diff = tgt - ang; while (diff > Math.PI) diff -= 2 * Math.PI; while (diff < -Math.PI) diff += 2 * Math.PI;
     const na = ang + clamp(diff, -turn, turn);
     p.dx = Math.cos(na); p.dy = Math.sin(na);
-    p.pen = pen; p.state = 'pen'; p.contact = 0; p.depth = 0; p.cellKey = -1;
+    p.pen = pen; p.state = 'pen'; p.contact = 0; p.depth = 0; p.cellKey = -1; p.layer = null;
     this.fx.spark(bx, by, -p.dx * 300, -p.dy * 300, 30, 1.0, 500);
-    this.fx.flash(bx, by, 0.6 + a.D * 4);
+    this.fx.flash(bx, by, 0.1 + a.D);
     this.fx.shake(0.25 + Math.min(1, pen.m * v * v / 2 / 2e7));
     this.shot.result = 'Penetrating';
+  }
+
+  openLayer(m) {
+    const p = this.proj;
+    if (p.layer && p.layer.mat === m) return;
+    this.closeLayer('through');
+    p.layer = { mat: m, len: 0, v0: p.pen.v };
+  }
+  closeLayer(how) {
+    const p = this.proj;
+    if (!p || !p.layer) return;
+    const L = p.layer; p.layer = null;
+    const mm = Math.round(L.len * 1000);
+    if (how === 'through') this.log(`${TMATS[L.mat].name}: ${mm} mm — through (${L.v0.toFixed(0)}→${p.pen.v.toFixed(0)} m/s)`);
+    else this.log(`${TMATS[L.mat].name}: ${mm} mm — ${how}`);
   }
 
   stepPen(h) {
@@ -225,39 +293,47 @@ export class World {
     p.x += p.dx * ds; p.y += p.dy * ds;
     p.vx = p.dx * pen.v; p.vy = p.dy * pen.v;
     if (p.contact >= 0) p.contact += ds;
-    if (!this.inGrid(p.x, p.y)) { this.shot.result = p.depth > 0 ? 'Passed through' : this.shot.result; this.endProj(); return; }
+    if (!this.inGrid(p.x, p.y)) { this.closeLayer('through'); this.shot.result = p.depth > 0 ? 'Passed right through' : this.shot.result; this.endProj(); return; }
     const i = this.cellI(p.x), j = this.cellJ(p.y);
     const key = j * GRID_W + i;
-    if (key === p.cellKey) return; // still inside a cell already paid for
+    if (key === p.cellKey) return;
     p.cellKey = key;
     const m = this.grid.get(i, j);
     if (m) {
       const tm = TMATS[m];
-      if (tm.fixed) { this.stopPen('Stopped by bedrock'); return; }
+      if (tm.fixed) { this.closeLayer('through'); this.stopPen('Buried in the ground'); return; }
       if (tm.era) {
         this.triggerERA(i, j);
         pen.len *= 0.72; pen.m *= 0.72; pen.yaw = Math.min(1.2, pen.yaw + 0.18);
         const na = Math.atan2(p.dy, p.dx) + (Math.random() < 0.5 ? -1 : 1) * 4 * DEG;
         p.dx = Math.cos(na); p.dy = Math.sin(na);
-        this.shot.notes.push('Reactive tile hit');
+        this.shot.notes.push('Reactive tile hit'); this.log('Reactive tile exploded — penetrator cut and knocked off line');
         return;
       }
+      this.openLayer(m);
       const chord = CELL / Math.max(Math.abs(p.dx), Math.abs(p.dy));
       const alive = keStep(pen, tm, chord);
-      p.depth += chord;
+      p.depth += chord; p.layer.len += chord;
       const sy = Math.abs(Math.sin(pen.yaw));
       let rad = Math.max(pen.d / 2, pen.d * pen.len * sy / 2);
-      if (m === T.CORE) rad = rad * 1.4 + CELL * clamp(0.5 * pen.m * pen.v * pen.v / 2.5e5, 0, 1.5); // innards shatter
+      if (m === T.CORE) rad = rad * 1.4 + CELL * clamp(0.5 * pen.m * pen.v * pen.v / 2.5e5, 0, 1.5);
       this.carve(p.x, p.y, rad, p.dx, p.dy, p.dx * Math.min(pen.v, 300) * 0.1, p.dy * Math.min(pen.v, 300) * 0.1, 3);
+      if (tm.H >= 3) {
+        this.heatRing(p.x, p.y, rad + CELL * 1.2);
+        if (Math.random() < 0.6) this.fx.molten(p.x - p.dx * CELL, p.y - p.dy * CELL, -p.dx * 4 + (Math.random() - 0.5) * 4, -p.dy * 4 + Math.random() * 3, 2);
+      }
       if (Math.random() < 0.35) this.fx.spark(p.x - p.dx * CELL, p.y - p.dy * CELL, -p.dx * 120, -p.dy * 120, 3, 1.4, 260);
       p.inSolid = true; p.lastMat = m;
-      if (!alive) { this.stopPen('Stopped inside armour'); return; }
+      if (!alive) { this.closeLayer('stopped'); this.stopPen(`Stopped inside the ${tm.name.toLowerCase()}`); return; }
     } else if (p.inSolid) {
       p.inSolid = false;
+      this.closeLayer('through');
       this.spall(p.x, p.y, p.dx, p.dy, pen, p.lastMat);
     }
     if (a.type === 'APHE' && p.contact >= a.fuse) {
-      this.shot.result = 'AP-HE burst inside';
+      this.closeLayer('through');
+      this.shot.result = 'Burrowed in, then detonated';
+      this.log(`Delay fuse fired ${(p.contact * 100).toFixed(0)} cm after impact: ${a.fillerTNT.toFixed(2)} kg TNT-eq`);
       this.detonate(p.x, p.y, a.fillerTNT, a.jacketMass * 0.5);
       this.endProj();
     }
@@ -266,11 +342,12 @@ export class World {
   stopPen(msg) {
     const p = this.proj, a = p.a;
     if (a.type === 'APHE') {
-      this.shot.result = 'AP-HE burst (stopped)';
+      this.shot.result = 'Stopped, then detonated';
+      this.log(`Charge goes off where the shell stopped: ${a.fillerTNT.toFixed(2)} kg TNT-eq`);
       this.detonate(p.x - p.dx * CELL, p.y - p.dy * CELL, a.fillerTNT, a.jacketMass * 0.5);
     } else {
       this.shot.result = msg;
-      this.embedded = { x: p.x, y: p.y, ang: Math.atan2(p.dy, p.dx), a };
+      this.embedded = { x: p.x, y: p.y, ang: Math.atan2(p.dy, p.dx), a, len: p.pen.len, d: p.pen.d, stripped: p.pen.stripped };
     }
     this.endProj();
   }
@@ -291,18 +368,40 @@ export class World {
     const R = Math.ceil(rc);
     let n = 0;
     for (let b = -R; b <= R; b++) for (let c = -R; c <= R; c++) {
-      // offsets in world orientation (y up)
       const ox = c, oy = -b;
       const along = ox * dx + oy * dy;
       const lat = Math.abs(ox * dy - oy * dx);
       if (!(b === 0 && c === 0) && (along > ahead || along < -1.2 || lat > rc + 0.2)) continue;
-      const m = g.destroy(ci + c, cj + b);
+      const m = g.destroy(ci + c, cj + b, rad < 0.2);
       if (m) {
         n++;
         if (n <= debrisN && this.debrisBudget > 0) { this.debrisBudget--; this.fx.debris(this.cx(ci + c), this.cy(cj + b), vx + (Math.random() - 0.5) * 18, vy + Math.random() * 12, m); }
       }
     }
     return n;
+  }
+
+  // Cells around a hole glow red-hot and cool down over a few seconds.
+  heatRing(x, y, rad) {
+    const g = this.grid, ci = this.cellI(x), cj = this.cellJ(y);
+    const R = Math.ceil(rad / CELL);
+    for (let b = -R; b <= R; b++) for (let c = -R; c <= R; c++) {
+      const i = ci + c, j = cj + b;
+      if (i < 0 || j < 0 || i >= g.W || j >= G_ROWS) continue;
+      const k = j * g.W + i, m = g.mat[k];
+      if (!m || TMATS[m].fixed || c * c + b * b > R * R + 1) continue;
+      if (!g.heat[k]) { if (this.hot.length > 5000) continue; this.hot.push(k); }
+      g.heat[k] = 255; g.mark(k);
+    }
+  }
+  cool(dt) {
+    const g = this.grid, d = Math.max(1, Math.round(dt * 110));
+    for (let n = this.hot.length - 1; n >= 0; n--) {
+      const k = this.hot[n];
+      const h = g.mat[k] ? Math.max(0, g.heat[k] - d) : 0;
+      g.heat[k] = h; g.mark(k);
+      if (!h) { this.hot[n] = this.hot[this.hot.length - 1]; this.hot.pop(); }
+    }
   }
 
   spall(x, y, dx, dy, pen, lastMat) {
@@ -319,7 +418,9 @@ export class World {
       this.addFrag(x, y, Math.cos(ang) * sp, Math.sin(ang) * sp, 0.02 + Math.random() * 0.05, 0.25);
     }
     this.fx.spark(x, y, dx * 400, dy * 400, 30, spread, 700);
+    this.fx.molten(x, y, dx * 8, dy * 8, 8);
     if (pen.pyro) this.fx.flash(x, y, 1.2);
+    this.log(`Spall: ${n} fragments burst out of the back of the ${tm.name.toLowerCase()}${pen.pyro ? ' (uranium ignites!)' : ''}`);
   }
 
   addFrag(x, y, vx, vy, m, life = 0.3) {
@@ -345,7 +446,7 @@ export class World {
             const cost = tm.R * f.A * CELL * (m === T.CORE ? 0.5 : 1);
             const E = 0.5 * f.m * v * v;
             if (E > cost) {
-              g.destroy(i, j);
+              g.destroy(i, j, true);
               if (this.debrisBudget > 0 && Math.random() < 0.3) { this.debrisBudget--; this.fx.debris(f.x, f.y, f.vx * 0.03, f.vy * 0.03 + 4, m); }
               const nv = Math.sqrt(2 * (E - cost) / f.m) / v;
               f.vx *= nv; f.vy *= nv;
@@ -379,6 +480,37 @@ export class World {
     const size = Math.cbrt(W);
     this.fx.explosion(x, y, size * (quiet ? 0.7 : 1));
     this.fx.shake(Math.min(1.6, 0.4 + size * 0.5));
+  }
+
+  // Squash head: the explosive pancakes on the face and knocks a scab off the back.
+  squash(px, py, bx, by, dx, dy, m) {
+    const a = this.proj.a, W = a.fillerTNT, tm = TMATS[m];
+    let t = 0, x = px, y = py;
+    while (t < 0.9) { x += dx * CELL * 0.5; y += dy * CELL * 0.5; t += CELL * 0.5; if (!this.inGrid(x, y)) break; const mm = this.matAt(x, y); if (!mm || TMATS[mm].fixed) break; }
+    const limit = 0.04 + 0.065 * Math.cbrt(W);
+    this.log(`Squash head spreads ${W.toFixed(2)} kg TNT-eq on a ${(t * 1000).toFixed(0)} mm ${tm.name.toLowerCase()} face`);
+    this.detonate(bx, by, W, a.jacketMass * 0.3);
+    if (tm.H >= 2.5 && t <= limit && this.matAt(x, y) === 0) {
+      const rs = Math.max(CELL * 1.5, a.D * 0.9);
+      const g = this.grid, ci = this.cellI(x), cj = this.cellJ(y), R = Math.ceil(rs / CELL);
+      for (let b = -R; b <= R; b++) for (let c = -R; c <= R; c++) {
+        const along = c * dx - b * dy;
+        if (along > 0.5 || along < -2.5 || c * c + b * b > R * R) continue;
+        const mm = g.destroy(ci + c, cj + b);
+        if (mm && this.debrisBudget-- > 0) this.fx.debris(this.cx(ci + c), this.cy(cj + b), dx * 25 + (Math.random() - 0.5) * 10, dy * 25 + Math.random() * 8, mm);
+      }
+      const n = Math.round(10 + 18 * Math.cbrt(W)), base = Math.atan2(dy, dx);
+      for (let k = 0; k < n; k++) {
+        const ang = base + (Math.random() + Math.random() - 1) * 0.7, sp = 250 + Math.random() * 400;
+        this.addFrag(x, y, Math.cos(ang) * sp, Math.sin(ang) * sp, 0.05 + Math.random() * 0.15, 0.3);
+      }
+      this.fx.spark(x, y, dx * 300, dy * 300, 30, 0.8, 500);
+      this.shot.result = 'Scab blown off the back face';
+      this.log(`Shock wave tears a scab off the back: ${n} heavy fragments`);
+    } else {
+      this.shot.result = 'Squash head — plate too thick';
+      this.log(t > limit ? `Too thick for a scab (limit ≈ ${(limit * 1000).toFixed(0)} mm)` : 'Soft material — no scab');
+    }
   }
 
   blast(x, y, W) {
@@ -423,11 +555,12 @@ export class World {
     this.debrisBudget -= start - debrisLeft;
   }
 
-  fireJet(x, y, dx, dy, J, linerD) {
+  fireJet(x, y, dx, dy, J, linerD, precursor = false) {
     const g = this.grid, ds = CELL * 0.5;
     const rj = Math.max(CELL * 0.5, linerD * 0.15);
     const chord = CELL / Math.max(Math.abs(dx), Math.abs(dy));
-    let inSolid = false, travelled = 0, hitAny = false, lastKey = -1, depth = 0;
+    let inSolid = false, travelled = 0, hitAny = false, lastKey = -1, depth = 0, layerMat = 0, layerLen = 0;
+    const closeL = how => { if (layerMat && !precursor) this.log(`${TMATS[layerMat].name}: ${Math.round(layerLen * 1000)} mm — ${how}`); layerMat = 0; layerLen = 0; };
     let px = x, py = y;
     while (J > 0 && travelled < 14) {
       px += dx * ds; py += dy * ds; travelled += ds;
@@ -441,13 +574,20 @@ export class World {
       if (m) {
         const tm = TMATS[m];
         if (tm.fixed) break;
-        if (tm.era) { this.triggerERA(i, j); J *= 0.3; this.shot.notes.push('Reactive tile disrupted jet'); continue; }
-        J -= chord * tm.heat; hitAny = true; depth += chord;
+        if (tm.era) {
+          this.triggerERA(i, j);
+          if (precursor) { this.log('Precursor jet sets off the reactive tile — main jet goes through clean'); J = 0; break; }
+          J *= 0.3; this.shot.notes.push('Reactive tile disrupted jet'); this.log('Reactive tile shreds the jet (−70%)'); continue;
+        }
+        if (layerMat !== m) { closeL('through'); layerMat = m; }
+        J -= chord * tm.heat; hitAny = true; depth += chord; layerLen += chord;
         this.carve(px, py, m === T.CORE ? rj + CELL * 1.5 : rj, dx, dy, dx * 30, dy * 30, 2);
+        if (tm.H >= 3) this.heatRing(px, py, rj + CELL);
         inSolid = true;
+        if (J <= 0) closeL('stopped');
       } else if (inSolid) {
-        inSolid = false;
-        if (J > 0) {
+        inSolid = false; closeL('through');
+        if (J > 0 && !precursor) {
           const n = clamp(Math.round(J * 60), 3, 26);
           for (let k = 0; k < n; k++) {
             const ang = Math.atan2(dy, dx) + (Math.random() + Math.random() - 1) * 0.45;
@@ -455,11 +595,13 @@ export class World {
             this.addFrag(px, py, Math.cos(ang) * sp, Math.sin(ang) * sp, 0.015 + Math.random() * 0.02, 0.2);
           }
           this.fx.spark(px, py, dx * 500, dy * 500, 20, 0.5, 800);
+          this.fx.molten(px, py, dx * 10, dy * 10, 6);
         }
       }
     }
-    this.fx.jet(x, y, px, py);
-    this.shot.depth = Math.max(this.shot.depth, depth);
+    if (layerMat) closeL('stopped');
+    this.fx.jet(x, y, px, py, precursor);
+    if (!precursor) this.shot.depth = Math.max(this.shot.depth, depth);
   }
 
   triggerERA(i, j) {
@@ -493,5 +635,6 @@ export class World {
       this.fx.debris(this.cx(i), this.cy(j), (Math.random() - 0.5) * 2, Math.random() * 1.5, m, stride > 1 ? 1.6 : 1);
     }
     this.fx.shake(Math.min(0.8, cnt / 800));
+    this.log(`${cnt} loose cells collapsed`);
   }
 }

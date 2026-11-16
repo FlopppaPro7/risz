@@ -1,14 +1,19 @@
 // Workshop: draws the shell cut-away and lets the player edit its Bezier outline.
-import { SHELL_MATS, FILLERS } from './data.js';
-import { profilePolyline, sliceRings, SLICES, bez } from './design.js';
+import { SHELL_MATS } from './data.js';
+import { profilePolyline, SLICES, RBINS, bez, ownerColor, ownerName, LAYER_KINDS } from './design.js';
 
-const KIND_COLOR = { filler: '#e8c04a', prop: '#8a5cc8', air: '#0d1218' };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
-function kindColor(d, kind) {
-  if (kind === 'jacket') return SHELL_MATS[d.jacket].color;
-  if (kind === 'core') return SHELL_MATS[d.core].color;
-  return KIND_COLOR[kind];
+// Sprite of the inner penetrator that carries on after the body strips off.
+export function makeCoreSprite(a) {
+  const W = 128, dh = 12;
+  const c = document.createElement('canvas'); c.width = W; c.height = dh + 2; c.dh = dh;
+  const g = c.getContext('2d'), cy = c.height / 2, col = a.coreColor;
+  const grad = g.createLinearGradient(0, cy - dh / 2, 0, cy + dh / 2);
+  grad.addColorStop(0, shade(col, 1.5)); grad.addColorStop(0.4, shade(col, 1.15)); grad.addColorStop(1, shade(col, 0.6));
+  g.fillStyle = grad;
+  g.beginPath(); g.moveTo(W, cy); g.lineTo(W - 22, cy - dh / 2); g.lineTo(0, cy - dh / 2); g.lineTo(0, cy + dh / 2); g.lineTo(W - 22, cy + dh / 2); g.closePath(); g.fill();
+  return c;
 }
 
 function shade(hex, f) {
@@ -126,24 +131,35 @@ export class ShellEditor {
       const xb = 0.82; const i = Math.min(N - 1, Math.floor(xb * N));
       ctx.fillStyle = '#c47a3c'; ctx.fillRect(this.X(xb), L.axisY, Math.max(3, L.lenPx * 0.04), r[i] * L.radPx + 1);
     }
-    // upper half: cut-away composition
+    // upper half: cut-away composition from the layer grid
+    const RB = RBINS, bins = a.bins;
     for (let i = 0; i < N; i++) {
-      const xf = (i + 0.5) / N, R = r[i];
+      const R = r[i];
       if (R <= 0) continue;
-      const x = this.X(xf) - dxPx / 2;
-      for (const [kind, ia, ib] of sliceRings(d, xf)) {
-        ctx.fillStyle = kindColor(d, kind);
-        const y1 = this.Y(ib * R), y0 = this.Y(ia * R);
-        ctx.fillRect(x, y1, dxPx + 0.6, y0 - y1);
+      const x = this.X((i + 0.5) / N) - dxPx / 2;
+      let k = 0;
+      while (k < RB) {
+        const o = bins[i * RB + k]; let e = k + 1;
+        while (e < RB && bins[i * RB + e] === o) e++;
+        ctx.fillStyle = ownerColor(d, o);
+        const y1 = this.Y(e / RB * R), y0 = this.Y(k / RB * R);
+        ctx.fillRect(x, y1, dxPx + 0.6, y0 - y1 + 0.5);
+        k = e;
       }
     }
-    // HEAT liner
-    if (d.type === 'HEAT') {
-      const xm = d.launcher === 'rocket' ? 1 - d.motorLen : 1;
-      const xs = d.capLen * xm, i = Math.min(N - 1, Math.floor((xs + 0.01) * N));
-      const rr = r[i] * d.fillR;
+    // shaped-charge liners (copper cones pointing forward)
+    for (const j of a.jets) {
+      const xs = j.standoff - 0.2 * a.D, rr = j.linerD / 2;
       ctx.strokeStyle = '#e08a40'; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(this.X(xs + d.fillLen * xm * 0.45), this.Y(rr)); ctx.lineTo(this.X(xs), L.axisY); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(this.X((xs + Math.min(j.fillLenM * 0.5, rr * 1.4)) / d.length), this.Y(rr / (d.caliber / 2))); ctx.lineTo(this.X(xs / d.length), L.axisY); ctx.stroke();
+    }
+    // highlight selected layer
+    if (this.layerSel != null && d.layers[this.layerSel]) {
+      const l = d.layers[this.layerSel];
+      ctx.strokeStyle = '#ffffff'; ctx.setLineDash([4, 3]); ctx.lineWidth = 1.5;
+      const ymax = Math.max(...Array.from(r.slice(Math.floor(l.x0 * N), Math.ceil(l.x1 * N) + 1))) || a.rmax;
+      ctx.strokeRect(this.X(l.x1), this.Y(l.ro * ymax), this.X(l.x0) - this.X(l.x1), this.Y(l.ri * ymax) - this.Y(l.ro * ymax));
+      ctx.setLineDash([]);
     }
     // hatch overlay on the cut
     ctx.save();
@@ -208,21 +224,27 @@ export class ShellEditor {
   drawCallouts(ctx) {
     const d = this.d, a = this.a, L = this.L;
     const items = [];
-    const find = kind => {
-      // centroid slice of a component in the upper half
-      let sx = 0, sy = 0, n = 0;
-      for (let i = 0; i < SLICES; i++) {
-        const xf = (i + 0.5) / SLICES, R = a.r[i];
-        for (const [k, ia, ib] of sliceRings(d, xf)) if (k === kind && R > 0) { sx += xf; sy += (ia + ib) / 2 * R; n++; }
+    // centroid of each composition owner in the upper half
+    const acc = new Map();
+    for (let i = 0; i < SLICES; i++) {
+      const R = a.r[i]; if (R <= 0) continue;
+      for (let k = 0; k < RBINS; k++) {
+        const o = a.bins[i * RBINS + k];
+        let s = acc.get(o); if (!s) { s = [0, 0, 0]; acc.set(o, s); }
+        s[0] += (i + 0.5) / SLICES; s[1] += (k + 0.5) / RBINS * R; s[2]++;
       }
-      return n ? [sx / n, sy / n] : null;
-    };
-    const add = (kind, title, sub) => { const p = find(kind); if (p) items.push({ p, title, sub }); };
-    add('jacket', SHELL_MATS[d.jacket].name.toUpperCase(), `Body · ${a.mass.jacket.toFixed(2)} kg`);
-    if (d.type === 'AP' || d.type === 'APHE') add('core', SHELL_MATS[d.core].name.toUpperCase(), `Penetrator core · ${a.mass.core.toFixed(2)} kg`);
-    if (d.type !== 'AP') add('filler', FILLERS[d.filler].name.toUpperCase(), `${d.type === 'HEAT' ? 'Shaped charge' : 'Bursting charge'} · ${a.mass.filler.toFixed(2)} kg`);
-    if (d.launcher === 'rocket') add('prop', 'ROCKET MOTOR', `Propellant · ${a.mass.prop.toFixed(2)} kg`);
-    const n = items.length; if (!n) return;
+    }
+    const pos = o => { const s = acc.get(o); return s && s[2] ? [s[0] / s[2], s[1] / s[2]] : null; };
+    const p0 = pos(-1);
+    if (p0) items.push({ p: p0, title: ownerName(d, -1).toUpperCase(), sub: `Body · ${a.mass.jacket.toFixed(2)} kg`, col: ownerColor(d, -1) });
+    d.layers.forEach((l, li) => {
+      const p = pos(li); if (!p) return;
+      const m = a.lstat[li].mass;
+      items.push({ p, title: ownerName(d, li).toUpperCase(), sub: `${LAYER_KINDS[l.kind]}${m > 0 ? ' · ' + m.toFixed(2) + ' kg' : ''}`, col: ownerColor(d, li) });
+    });
+    const n = Math.min(items.length, Math.max(2, Math.floor((this.w - 10) / 110)));
+    items.length = n;
+    if (!n) return;
     const boxW = Math.min(150, (this.w - 20) / n - 8), boxH = 34;
     items.sort((u, v) => v.p[0] - u.p[0]);
     ctx.font = '10px system-ui'; ctx.textAlign = 'left';
@@ -234,6 +256,7 @@ export class ShellEditor {
       ctx.strokeRect(tx - 3, ty - 3, 6, 6);
       ctx.fillStyle = 'rgba(14,20,28,0.88)'; ctx.fillRect(bx, by, boxW, boxH);
       ctx.strokeStyle = 'rgba(200,220,240,0.45)'; ctx.strokeRect(bx + 0.5, by + 0.5, boxW, boxH);
+      ctx.fillStyle = it.col; ctx.fillRect(bx, by, 3, boxH);
       ctx.fillStyle = '#7fe0ff'; ctx.fillText('0' + (k + 1), bx + 6, by + 14);
       ctx.fillStyle = '#e8f0f8'; ctx.font = 'bold 10px system-ui'; ctx.fillText(it.title.slice(0, 18), bx + 24, by + 14);
       ctx.font = '9px system-ui'; ctx.fillStyle = 'rgba(200,215,230,0.75)'; ctx.fillText(it.sub, bx + 6, by + 27);

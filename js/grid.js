@@ -8,6 +8,8 @@ export class Grid {
     this.mat = new Uint8Array(n);
     this.hp = new Float32Array(n);
     this.scorch = new Uint8Array(n);
+    this.heat = new Uint8Array(n);
+    this.bridge = new Uint8Array(n); // holes punched by shells: still load-bearing in 3D
     this.noise = new Uint8Array(n);
     for (let i = 0; i < n; i++) this.noise[i] = (Math.random() * 255) | 0;
     this.changed = new Uint8Array(n);
@@ -18,7 +20,7 @@ export class Grid {
   }
 
   reset() {
-    this.mat.fill(0); this.hp.fill(1); this.scorch.fill(0);
+    this.mat.fill(0); this.hp.fill(1); this.scorch.fill(0); this.heat.fill(0); this.bridge.fill(0);
     for (let j = G_ROWS; j < this.H; j++) for (let i = 0; i < this.W; i++) this.mat[j * this.W + i] = T.GROUND;
     if (this.build) this.build(this.builder());
     this.recount();
@@ -63,11 +65,14 @@ export class Grid {
   mark(k) { if (!this.changed[k]) { this.changed[k] = 1; this.dirty.push(k); } }
 
   // returns destroyed material id (0 if nothing)
-  destroy(i, j) {
+  // bridge=true for narrow holes (shell / jet / fragment paths): in 3D the metal around the
+  // hole still holds the structure together, so it must not make pieces fall off.
+  destroy(i, j, bridge = false) {
     if (i < 0 || j < 0 || i >= this.W || j >= this.H) return 0;
     const k = j * this.W + i, m = this.mat[k];
     if (!m || TMATS[m].fixed) return 0;
     this.mat[k] = 0; this.hp[k] = 1;
+    if (bridge && m !== T.CORE) this.bridge[k] = 1; else this.bridge[k] = 0;
     if (m === T.CORE) this.coreLeft--;
     this.mark(k);
     return m;
@@ -89,7 +94,7 @@ export class Grid {
     if (old === m) return;
     if (old === T.CORE) { this.coreLeft--; this.coreTotal--; }
     if (m === T.CORE) { this.coreLeft++; this.coreTotal++; }
-    this.mat[k] = m; this.hp[k] = 1; this.scorch[k] = 0; this.mark(k);
+    this.mat[k] = m; this.hp[k] = 1; this.scorch[k] = 0; this.bridge[k] = 0; this.mark(k);
   }
 
   // bounding box (cells) of everything above ground
@@ -106,7 +111,8 @@ export class Grid {
 
   // Remove cells no longer connected to the ground. Returns list of [k, mat].
   detachFloating(maxReturn = 1e9) {
-    const W = this.W, n = this.mat.length, mat = this.mat;
+    const W = this.W, n = this.mat.length, mat = this.mat, br = this.bridge;
+    const solid = k => mat[k] || br[k];
     const seen = new Uint8Array(n);
     const stack = new Int32Array(n); let sp = 0;
     for (let i = 0; i < W; i++) { const k = G_ROWS * W + i; seen[k] = 1; stack[sp++] = k; }
@@ -114,10 +120,10 @@ export class Grid {
       const k = stack[--sp];
       const i = k % W;
       const nb0 = k - W, nb1 = k + W, nb2 = i > 0 ? k - 1 : -1, nb3 = i < W - 1 ? k + 1 : -1;
-      if (nb0 >= 0 && !seen[nb0] && mat[nb0]) { seen[nb0] = 1; stack[sp++] = nb0; }
-      if (nb1 < n && !seen[nb1] && mat[nb1]) { seen[nb1] = 1; stack[sp++] = nb1; }
-      if (nb2 >= 0 && !seen[nb2] && mat[nb2]) { seen[nb2] = 1; stack[sp++] = nb2; }
-      if (nb3 >= 0 && !seen[nb3] && mat[nb3]) { seen[nb3] = 1; stack[sp++] = nb3; }
+      if (nb0 >= 0 && !seen[nb0] && solid(nb0)) { seen[nb0] = 1; stack[sp++] = nb0; }
+      if (nb1 < n && !seen[nb1] && solid(nb1)) { seen[nb1] = 1; stack[sp++] = nb1; }
+      if (nb2 >= 0 && !seen[nb2] && solid(nb2)) { seen[nb2] = 1; stack[sp++] = nb2; }
+      if (nb3 >= 0 && !seen[nb3] && solid(nb3)) { seen[nb3] = 1; stack[sp++] = nb3; }
     }
     const out = [];
     for (let k = 0; k < n; k++) {

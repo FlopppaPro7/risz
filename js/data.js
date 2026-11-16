@@ -9,6 +9,7 @@ export const GRAVITY = 9.81;
 export const AIR_RHO = 1.225;
 export const SOUND = 340;
 export const MUZZLE_H = 1.8;       // launcher height (m)
+export const MAX_SHOTS = 5;      // more than five shells on one stage = defeat
 export const CORE_WIN = 0.4;     // fraction of core cells that must be destroyed
 
 // ---------- shell building materials ----------
@@ -58,9 +59,9 @@ TMATS[T.WOOD]     = { name: 'Timber',      R: 0.15e9, H: 0.6, rho: 600, heat: 0.
 TMATS[T.BRICK]    = { name: 'Brick',       R: 0.6e9, H: 2,   rho: 1900, heat: 0.28, blast: 2.5, absorb: 1, color: [168, 82, 60],  solid: true };
 TMATS[T.CONCRETE] = { name: 'Concrete',    R: 1.2e9, H: 3,   rho: 2400, heat: 0.35, blast: 6,   absorb: 1.1, color: [150, 150, 142], solid: true };
 TMATS[T.RCONC]    = { name: 'Rebar Concrete', R: 1.8e9, H: 3.5, rho: 2500, heat: 0.45, blast: 9, absorb: 1.2, color: [118, 124, 128], solid: true };
-TMATS[T.STEEL]    = { name: 'Armour Steel', R: 4.5e9, H: 5,  rho: 7850, heat: 1.0, blast: 40,  absorb: 1, color: [120, 136, 150], solid: true, spall: true };
-TMATS[T.HHA]      = { name: 'High-Hard Steel', R: 5.4e9, H: 6.5, rho: 7850, heat: 1.05, blast: 46, absorb: 1, color: [86, 104, 122], solid: true, spall: true };
-TMATS[T.CERAMIC]  = { name: 'Ceramic Composite', R: 5.0e9, H: 9, rho: 3800, heat: 2.6, blast: 30, absorb: 1.3, color: [206, 196, 160], solid: true };
+TMATS[T.STEEL]    = { name: 'Armour Steel', R: 4.5e9, H: 5,  rho: 7850, heat: 1.0, blast: 90,  absorb: 1, color: [120, 136, 150], solid: true, spall: true };
+TMATS[T.HHA]      = { name: 'High-Hard Steel', R: 5.4e9, H: 6.5, rho: 7850, heat: 1.05, blast: 105, absorb: 1, color: [86, 104, 122], solid: true, spall: true };
+TMATS[T.CERAMIC]  = { name: 'Ceramic Composite', R: 5.0e9, H: 9, rho: 3800, heat: 2.6, blast: 70, absorb: 1.3, color: [206, 196, 160], solid: true };
 TMATS[T.ERA]      = { name: 'Reactive Tile', R: 2.5e9, H: 5, rho: 3000, heat: 1.0, blast: 15, absorb: 1, color: [204, 170, 40], solid: true, era: true };
 TMATS[T.CORE]     = { name: 'Target Core', R: 0.4e9, H: 2,   rho: 3000, heat: 0.4, blast: 3,   absorb: 1, color: [228, 40, 40], solid: true, core: true };
 TMATS[T.GLASS]    = { name: 'Glass',       R: 0.3e9, H: 5,   rho: 2500, heat: 0.2, blast: 0.6, absorb: 0.6, color: [150, 210, 230], solid: true };
@@ -72,7 +73,7 @@ export const PAINT_MATS = [T.WOOD, T.BRICK, T.CONCRETE, T.RCONC, T.SAND, T.GLASS
 // build(b): b.rect(x, y, w, h, mat) with x,y in cells from the grid's left edge / ground up.
 export const LEVELS = [
   {
-    id: 1, name: 'Brick Shed', dist: 150, shots: 1, stars: [35, 60],
+    id: 1, name: 'Brick Shed', dist: 150, shots: 5, stars: [42, 75],
     brief: 'A plain brick shed. Anything works — but how cheap can you go?',
     build(b) {
       b.rect(70, 0, 5, 46, T.BRICK); b.rect(110, 0, 5, 46, T.BRICK); b.rect(70, 41, 45, 5, T.BRICK);
@@ -81,7 +82,7 @@ export const LEVELS = [
     },
   },
   {
-    id: 2, name: 'Timber Stockade', dist: 250, shots: 1, stars: [35, 60],
+    id: 2, name: 'Timber Stockade', dist: 250, shots: 5, stars: [35, 60],
     brief: 'Three log palisades guard a wooden hut. Thick, but soft.',
     build(b) {
       for (const x of [44, 60, 76]) { b.rect(x, 0, 7, 58, T.WOOD); b.rect(x + 1, 58, 1, 3, T.WOOD); b.rect(x + 4, 58, 1, 3, T.WOOD); }
@@ -91,7 +92,7 @@ export const LEVELS = [
     },
   },
   {
-    id: 3, name: 'Sandbag Nest', dist: 400, shots: 1, stars: [90, 160],
+    id: 3, name: 'Sandbag Nest', dist: 400, shots: 5, stars: [90, 160],
     brief: 'Sand soaks up blast waves. A concrete shell hides the core.',
     build(b) {
       b.poly([[70, 0], [96, 0], [96, 40], [92, 40]], T.SAND);
@@ -104,7 +105,7 @@ export const LEVELS = [
     },
   },
   {
-    id: 4, name: 'Concrete Pillbox', dist: 500, shots: 1, stars: [110, 190],
+    id: 4, name: 'Concrete Pillbox', dist: 500, shots: 5, stars: [115, 205],
     brief: 'One metre of concrete all round. Bring weight or bring boom.',
     build(b) {
       b.box(60, 0, 84, 72, 20, T.CONCRETE);
@@ -114,7 +115,7 @@ export const LEVELS = [
     },
   },
   {
-    id: 5, name: 'Vault Door', dist: 600, shots: 1, stars: [100, 180],
+    id: 5, name: 'Vault Door', dist: 600, shots: 5, stars: [95, 165],
     brief: '15 cm of armour steel in a rebar-concrete frame. Blast alone will not open it.',
     build(b) {
       b.rect(60, 60, 82, 16, T.RCONC);
@@ -126,7 +127,7 @@ export const LEVELS = [
     },
   },
   {
-    id: 6, name: 'Sloped Glacis', dist: 800, shots: 1, stars: [120, 210],
+    id: 6, name: 'Sloped Glacis', dist: 800, shots: 5, stars: [105, 190],
     brief: '10 cm plate laid back at 60°. Shallow, blunt-angled hits skip right off.',
     build(b) {
       b.poly([[58, 0], [64, 0], [112, 52], [106, 52]], T.STEEL);
@@ -137,7 +138,7 @@ export const LEVELS = [
     },
   },
   {
-    id: 7, name: 'Skirted Hull', dist: 900, shots: 1, stars: [145, 260],
+    id: 7, name: 'Skirted Hull', dist: 900, shots: 5, stars: [120, 215],
     brief: 'A thin skirt 1.5 m ahead of 15 cm of hull. Jets hate the gap.',
     build(b) {
       b.rect(48, 10, 1, 58, T.STEEL);
@@ -150,7 +151,7 @@ export const LEVELS = [
     },
   },
   {
-    id: 8, name: 'Long Shot', dist: 2500, shots: 1, stars: [175, 310],
+    id: 8, name: 'Long Shot', dist: 2500, shots: 5, stars: [210, 370],
     brief: '2.5 km away: drag eats speed. Stable, slippery shapes keep their punch.',
     build(b) {
       b.poly([[66, 0], [72, 0], [98, 46], [92, 46]], T.STEEL);
@@ -161,7 +162,7 @@ export const LEVELS = [
     },
   },
   {
-    id: 9, name: 'Ceramic Bastion', dist: 1200, shots: 1, stars: [540, 950],
+    id: 9, name: 'Ceramic Bastion', dist: 1200, shots: 5, stars: [335, 590],
     brief: '30 cm of ceramic composite backed by steel. Shaped-charge jets crumble in ceramic.',
     build(b) {
       b.rect(72, 0, 6, 70, T.CERAMIC);
@@ -173,20 +174,7 @@ export const LEVELS = [
     },
   },
   {
-    id: 10, name: 'Deep Bunker', dist: 1000, shots: 2, stars: [740, 1300],
-    brief: 'Sand, then rebar concrete, then steel. Two shots: open a hole, then go through it.',
-    build(b) {
-      b.poly([[40, 0], [80, 0], [80, 74], [70, 74]], T.SAND);
-      b.rect(80, 0, 20, 82, T.RCONC);
-      b.rect(100, 0, 2, 74, T.STEEL);
-      b.rect(100, 74, 70, 10, T.RCONC);
-      b.rect(160, 0, 10, 74, T.RCONC);
-      b.rect(122, 0, 20, 18, T.RCONC);
-      b.rect(126, 18, 12, 12, T.CORE);
-    },
-  },
-  {
-    id: 11, name: 'Reactive Tank', dist: 1500, shots: 1, stars: [1080, 1900],
+    id: 10, name: 'Reactive Tank', dist: 1500, shots: 5, stars: [350, 615],
     brief: 'Reactive tiles and a ceramic turret face. The core sits in the turret.',
     build(b) {
       b.rect(40, 0, 130, 8, T.STEEL);
@@ -203,7 +191,20 @@ export const LEVELS = [
     },
   },
   {
-    id: 12, name: 'Behemoth', dist: 3000, shots: 2, stars: [1300, 2400],
+    id: 11, name: 'Deep Bunker', dist: 1000, shots: 5, stars: [620, 1100],
+    brief: 'Sand, then rebar concrete, then steel. Open a hole with one shell, then send the next one through it.',
+    build(b) {
+      b.poly([[40, 0], [80, 0], [80, 74], [70, 74]], T.SAND);
+      b.rect(80, 0, 20, 82, T.RCONC);
+      b.rect(100, 0, 2, 74, T.STEEL);
+      b.rect(100, 74, 70, 10, T.RCONC);
+      b.rect(160, 0, 10, 74, T.RCONC);
+      b.rect(122, 0, 20, 18, T.RCONC);
+      b.rect(126, 18, 12, 12, T.CORE);
+    },
+  },
+  {
+    id: 12, name: 'Behemoth', dist: 3000, shots: 5, stars: [950, 1700],
     brief: 'Reactive tiles, ceramic, high-hard steel, spaced plates. 3 km out. Good luck.',
     build(b) {
       for (let y = 4; y < 80; y += 5) b.rect(36, y, 4, 4, T.ERA);

@@ -9,15 +9,19 @@ Open `index.html` through any static web server, or publish it with GitHub Pages
 ## How it plays
 
 - **Shape**: drag Bezier points and handles to draw the outline. The game spins the outline into a solid and works out volume, mass, centre of mass, drag and centre of pressure from it.
-- **Payload**:
-  - **Solid shot**: kinetic penetrator with a jacket and a core (steel, tungsten, DU…).
-  - **AP-HE**: penetrates, then bursts after a fuse delay.
-  - **HE**: blast and fragments.
-  - **HEAT**: shaped-charge jet.
+- **Inside (layers)**: stack any layers inside the body. Each layer has its own start/end position and inner/outer radius:
+  - **Penetrator core** of any metal (steel, tungsten, DU…). A soft body peels off on hard armour and the core carries on alone.
+  - **Explosive**, set off by the fuse: **Impact** (HE), **Delay** (burrows in, then bursts) or **Squash** (HESH, knocks a scab off the back of a plate).
+  - **Shaped charge**: a jet. Two of them make a tandem charge, where the front one clears reactive tiles.
+  - **Hollow** space, for stand-off or to save weight.
+  - **Rocket fuel**: makes a rocket, or a rocket-assisted cannon shell.
+- **Limits**: at least 20 mm diameter, L/D ≤ 30, no pinched waist, and at least 3 mm of casing around soft fillings. The shell must also survive its own launch acceleration, and the gun can't push past about 1,850 m/s.
 - **Launch**:
-  - **Cannon**: set propellant charge and gun bore. A bore wider than the shell adds a sabot. Rifling spins short shells stable; long ones need fins.
-  - **Rocket**: thrust and burn time come from the motor length. Rockets need fins to fly straight.
-- **Campaign**: 12 stages. Each stage has a shot limit, and your total spend earns 1–3 stars.
+  - **Artillery gun**: set propellant charge and gun bore. A bore wider than the shell adds a sabot. Rifling spins short shells stable; long ones need fins.
+  - **Rocket rail**: thrust and burn time come from the fuel layers. Rockets need fins to fly straight.
+- **Aim**: lay the howitzer yourself. Drag up/down, use ± with 1° / 0.1° / 0.01° steps, or the arrow keys. A small window shows where an ideal shot would land. Fire with the FIRE button, Space or Enter.
+- **Slow motion**: the camera follows the shell into the target in slow motion. You see the body peel, molten metal and red-hot hole edges, then a shot report lists every layer it went through.
+- **Campaign**: 12 stages. You get at most **5 shells** per stage, and you can swap shells between shots from the rack. Your total spend earns 1–3 stars.
 - **Sandbox**: unlimited shots, any target, any range, and a material paint brush.
 - **Share**: in Workshop → Saved, copy a share code. A friend can import it and try to beat your price.
 

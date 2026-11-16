@@ -50,22 +50,26 @@ function mutate(d) {
 }
 function valid(a) { return a.errors.filter(e => !e.includes('clamped')).length === 0; }
 
+// Returns the worst-case number of shells needed to win (0 = could not win).
 function wins(level, d, a, trials) {
+  let used = 0;
   for (let t = 0; t < trials; t++) {
     const w = new World({ build: level.build, dist: level.dist });
     const g = w.grid; let sx = 0, sy = 0, n = 0;
     for (let j = 0; j < g.H; j++) for (let i = 0; i < g.W; i++) if (g.mat[j * g.W + i] === 10) { sx += i; sy += j; n++; }
     const sol = World.solveAngle(a, w.cx(sx / n), w.cy(sy / n));
-    if (!sol.ok) return false;
-    for (let s = 0; s < level.shots; s++) {
+    if (!sol.ok) return 0;
+    let s = 0;
+    for (; s < level.shots; s++) {
       w.fire(d, a, sol.angle);
       let guard = 0; while (w.busy() && guard++ < 100000) w.step(1 / 60);
       w.step(0.01);
       if (g.coreFraction() >= CORE_WIN) break;
     }
-    if (g.coreFraction() < CORE_WIN) return false;
+    if (g.coreFraction() < CORE_WIN) return 0;
+    used = Math.max(used, s + 1);
   }
-  return true;
+  return used;
 }
 
 const only = process.argv[2] ? +process.argv[2] : 0;
@@ -73,14 +77,14 @@ const budgetMs = +(process.argv[3] || 20000);
 for (const L of LEVELS) {
   if (only && L.id !== only) continue;
   const t0 = Date.now(); let best = null, bestCost = Infinity, tried = 0;
-  for (const src of [...Object.values(PRESETS), ...SEEDS]) { const d = normalizeDesign(src); const a = analyze(d); if (valid(a) && a.totalCost < bestCost && wins(L, d, a, 3)) { best = d; bestCost = a.totalCost; } }
+  for (const src of [...Object.values(PRESETS), ...SEEDS]) { const d = normalizeDesign(src); const a = analyze(d); const u = valid(a) && wins(L, d, a, 3); if (u && u * a.totalCost < bestCost) { best = src; bestCost = u * a.totalCost; } }
   const presetBest = bestCost;
   while (Date.now() - t0 < budgetMs) {
     const d = best && Math.random() < 0.5 ? mutate(best) : randomDesign();
-    const a = analyze(d); tried++;
+    const a = analyze(normalizeDesign(d)); tried++;
     if (!valid(a) || a.totalCost >= bestCost) continue;
-    if (wins(L, d, a, 1) && wins(L, d, a, 2)) { best = d; bestCost = a.totalCost; }
+    const nd = normalizeDesign(d); const u1 = wins(L, nd, a, 1); if (u1 && u1 * a.totalCost < bestCost) { const u2 = wins(L, nd, a, 2); if (u2 && u2 * a.totalCost < bestCost) { best = d; bestCost = u2 * a.totalCost; } }
   }
-  const a = best ? analyze(best) : null;
-  console.log(`L${L.id} ${L.name}: cheapest ${bestCost} (preset best ${presetBest}) tried ${tried}` + (a ? ` -> ${best.type} ${best.launcher} cal ${(best.caliber * 1000).toFixed(0)}mm L ${best.length.toFixed(2)} jacket ${best.jacket} core ${best.core} v0 ${a.muzzleV.toFixed(0)} m ${a.flightMass.toFixed(2)} TNT ${a.fillerTNT.toFixed(2)}` : ''));
+  const a = best ? analyze(normalizeDesign(best)) : null;
+  console.log(`L${L.id} ${L.name}: cheapest ${bestCost} (preset best ${presetBest}) tried ${tried}` + (a ? ` -> ${a.type} ${best.launcher} cal ${(best.caliber * 1000).toFixed(0)}mm L ${best.length.toFixed(2)} jacket ${best.jacket} core ${best.core} v0 ${a.muzzleV.toFixed(0)} m ${a.flightMass.toFixed(2)} TNT ${a.fillerTNT.toFixed(2)}` : ''));
 }

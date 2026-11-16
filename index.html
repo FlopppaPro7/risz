@@ -67,7 +67,7 @@
       <div class="ws-panel">
         <nav class="tabs" id="tabs">
           <button data-tab="body" class="on">Body</button>
-          <button data-tab="payload">Payload</button>
+          <button data-tab="inside">Inside</button>
           <button data-tab="launch">Launch</button>
           <button data-tab="saved">Saved</button>
         </nav>
@@ -95,11 +95,22 @@
       <button class="btn sm toggle on" id="sbSlow">Slow-mo</button>
       <div id="paintBar" class="paint-bar hidden"></div>
     </div>
-    <div id="hudMsg" class="hud-msg"></div>
+    <div id="report" class="report hidden"></div>
     <div class="hud-bottom">
-      <button class="btn" id="hudWorkshop">⚙ Workshop</button>
-      <div id="aimInfo" class="aim-info">Tap the target to aim</div>
-      <button class="btn primary fire" id="hudFire">FIRE</button>
+      <div id="aimInfo" class="aim-info"></div>
+      <div class="aim-bar" id="aimBar">
+        <button class="btn el" id="elDown" aria-label="Lower gun">−</button>
+        <div class="elev"><small>ELEVATION</small><b id="elVal">0.00°</b></div>
+        <button class="btn el" id="elUp" aria-label="Raise gun">+</button>
+        <div class="seg steps" id="steps"><button data-step="1">1°</button><button data-step="0.1" class="on">0.1°</button><button data-step="0.01">0.01°</button></div>
+        <button class="btn sm" id="viewBtn" title="Swap gun / target view">⇄ View</button>
+      </div>
+      <div class="hud-row">
+        <button class="btn" id="hudWorkshop" title="Workshop">⚙</button>
+        <select id="hudShell" title="Shell rack"></select>
+        <span class="grow"></span>
+        <button class="btn primary fire" id="hudFire">FIRE</button>
+      </div>
     </div>
   </section>
 
